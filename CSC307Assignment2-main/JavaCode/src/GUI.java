@@ -3,254 +3,143 @@ import java.awt.*;
 import java.util.Objects;
 
 /**
- * Three-column Swing view for the blackboard. Implements {@link BlackboardObserver} so lists stay in
- * sync when the model changes. Layout matches the original assignment structure (one column per
- * entity); lists use single selection and safe selection callbacks.
+ * Main Swing window for the project planner.
+ *
+ * This class connects the main GUI panels and listens for Blackboard changes.
+ *
+ * @author Eman Castilo Hernandez
+ * @version 1.0
  */
 public class GUI extends JFrame implements BlackboardObserver {
 
     private final Blackboard blackboard;
+    private final WorkspacePanel workspacePanel;
+    private final InfoPanel infoPanel;
+    private final AIPanel aiPanel;
+    private final JLabel statusLabel = new JLabel("Ready");
 
-    private final DefaultListModel<Project> projectModel = new DefaultListModel<>();
-    private final DefaultListModel<Story> storyModel = new DefaultListModel<>();
-    private final DefaultListModel<Task> taskModel = new DefaultListModel<>();
-
-    private final JList<Project> projectList = new JList<>(projectModel);
-    private final JList<Story> storyList = new JList<>(storyModel);
-    private final JList<Task> taskList = new JList<>(taskModel);
+    private AppController appController = new AppController() { };
 
     /**
-     * @param blackboard shared model; typically created once in {@link Main#main(String[])} and passed here.
+     * @param blackboard shared model; typically created once in {@link Main#main(String[])}
      */
     public GUI(Blackboard blackboard) {
-        try {
-            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException
-                 | UnsupportedLookAndFeelException ignored) {
-            // Keep default LAF if the platform one is not available.
-        }
+        installLookAndFeel();
 
         this.blackboard = Objects.requireNonNull(blackboard, "blackboard");
         this.blackboard.addObserver(this);
 
-        projectList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        storyList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        taskList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        configureFrame();
 
-        setTitle("Blackboard GUI");
-        setSize(800, 400);
-        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        setLayout(new GridLayout(1, 3));
+        this.workspacePanel = new WorkspacePanel(blackboard, this::setStatus, this::refreshContextPanels);
+        this.infoPanel = new InfoPanel();
+        this.aiPanel = new AIPanel(() -> appController, workspacePanel::getSelectedStory, this::setStatus);
 
-        add(createProjectPanel());
-        add(createStoryPanel());
-        add(createTaskPanel());
+        add(createToolbar(), BorderLayout.NORTH);
+        add(createMainContent(), BorderLayout.CENTER);
+        add(createStatusBar(), BorderLayout.SOUTH);
 
-        projectList.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                refreshStories();
-            }
-        });
-        storyList.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                refreshTasks();
-            }
-        });
-
+        blackboardChanged();
         setLocationRelativeTo(null);
         setVisible(true);
     }
 
-    private JPanel createProjectPanel() {
+    public void setAppController(AppController appController) {
+        this.appController = Objects.requireNonNull(appController, "appController");
+    }
+
+    private void installLookAndFeel() {
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException
+                 | UnsupportedLookAndFeelException ignored) {
+            // Keep the default look and feel if the system one is unavailable.
+        }
+    }
+
+    private void configureFrame() {
+        setTitle("CSC 307 Project Planner");
+        setSize(1100, 650);
+        setMinimumSize(new Dimension(900, 500));
+        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setLayout(new BorderLayout(8, 8));
+    }
+
+    private JComponent createToolbar() {
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
+        JButton connectTaigaButton = new JButton("Connect to Taiga");
+        JButton refreshButton = new JButton("Refresh View");
+
+        connectTaigaButton.addActionListener(e -> runTaigaConnection());
+        refreshButton.addActionListener(e -> blackboardChanged());
+
+        toolbar.add(connectTaigaButton);
+        toolbar.add(refreshButton);
+
+        return toolbar;
+    }
+
+    private JComponent createMainContent() {
+        JTabbedPane rightTabs = new JTabbedPane();
+        rightTabs.addTab("Info", infoPanel);
+        rightTabs.addTab("AI Panel", aiPanel);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, workspacePanel, rightTabs);
+        splitPane.setResizeWeight(0.65);
+        splitPane.setBorder(BorderFactory.createEmptyBorder());
+        return splitPane;
+    }
+
+    private JComponent createStatusBar() {
         JPanel panel = new JPanel(new BorderLayout());
-
-        JButton addButton = new JButton("Add Project");
-        JButton deleteButton = new JButton("Delete Project");
-
-        addButton.addActionListener(e -> {
-            String name = JOptionPane.showInputDialog(this, "Project name:");
-            if (name != null && !name.trim().isEmpty()) {
-                blackboard.createProject(name.trim());
-            }
-        });
-
-        deleteButton.addActionListener(e -> {
-            Project selectedProject = projectList.getSelectedValue();
-
-            if (selectedProject == null) {
-                JOptionPane.showMessageDialog(this, "Select a project first.");
-                return;
-            }
-
-            int confirm = JOptionPane.showConfirmDialog(
-                    this,
-                    "Delete project: " + selectedProject.getName() + "?",
-                    "Confirm Delete",
-                    JOptionPane.YES_NO_OPTION
-            );
-
-            if (confirm == JOptionPane.YES_OPTION) {
-                blackboard.deleteProjectById(selectedProject.getId());
-            }
-        });
-
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.add(addButton);
-        buttonPanel.add(deleteButton);
-
-        panel.add(new JLabel("Projects", SwingConstants.CENTER), BorderLayout.NORTH);
-        panel.add(new JScrollPane(projectList), BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-
+        panel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        panel.add(statusLabel, BorderLayout.WEST);
         return panel;
     }
 
-    private JPanel createStoryPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-
-        JButton addButton = new JButton("Add Story");
-        JButton deleteButton = new JButton("Delete Story");
-
-        addButton.addActionListener(e -> {
-            Project selectedProject = projectList.getSelectedValue();
-
-            if (selectedProject == null) {
-                JOptionPane.showMessageDialog(this, "Select a project first.");
-                return;
-            }
-
-            String title = JOptionPane.showInputDialog(this, "Story title:");
-            if (title != null && !title.trim().isEmpty()) {
-                selectedProject.createStory(title.trim());
-            }
-        });
-
-        deleteButton.addActionListener(e -> {
-            Project selectedProject = projectList.getSelectedValue();
-            Story selectedStory = storyList.getSelectedValue();
-
-            if (selectedProject == null || selectedStory == null) {
-                JOptionPane.showMessageDialog(this, "Select a story first.");
-                return;
-            }
-
-            int confirm = JOptionPane.showConfirmDialog(
-                    this,
-                    "Delete story: " + selectedStory.getTitle() + "?",
-                    "Confirm Delete",
-                    JOptionPane.YES_NO_OPTION
-            );
-
-            if (confirm == JOptionPane.YES_OPTION) {
-                selectedProject.deleteStoryById(selectedStory.getId());
-            }
-        });
-
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.add(addButton);
-        buttonPanel.add(deleteButton);
-
-        panel.add(new JLabel("Stories", SwingConstants.CENTER), BorderLayout.NORTH);
-        panel.add(new JScrollPane(storyList), BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-
-        return panel;
-    }
-
-    private JPanel createTaskPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-
-        JButton addButton = new JButton("Add Task");
-        JButton deleteButton = new JButton("Delete Task");
-
-        addButton.addActionListener(e -> {
-            Story selectedStory = storyList.getSelectedValue();
-
-            if (selectedStory == null) {
-                JOptionPane.showMessageDialog(this, "Select a story first.");
-                return;
-            }
-
-            String title = JOptionPane.showInputDialog(this, "Task title:");
-            if (title != null && !title.trim().isEmpty()) {
-                selectedStory.createTask(title.trim());
-            }
-        });
-
-        deleteButton.addActionListener(e -> {
-            Story selectedStory = storyList.getSelectedValue();
-            Task selectedTask = taskList.getSelectedValue();
-
-            if (selectedStory == null || selectedTask == null) {
-                JOptionPane.showMessageDialog(this, "Select a task first.");
-                return;
-            }
-
-            selectedStory.deleteTaskById(selectedTask.getId());
-        });
-
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.add(addButton);
-        buttonPanel.add(deleteButton);
-
-        panel.add(new JLabel("Tasks", SwingConstants.CENTER), BorderLayout.NORTH);
-        panel.add(new JScrollPane(taskList), BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-
-        return panel;
+    private void runTaigaConnection() {
+        try {
+            appController.connectToTaiga(this, blackboard);
+            setStatus("Taiga action completed. View refreshed from Blackboard.");
+            blackboardChanged();
+        } catch (RuntimeException ex) {
+            showError("Taiga connection failed", ex);
+        }
     }
 
     @Override
     public void blackboardChanged() {
-        refreshProjects();
-        refreshStories();
-        refreshTasks();
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::blackboardChanged);
+            return;
+        }
+
+        workspacePanel.refreshFromBlackboard();
+        refreshContextPanels();
     }
 
-    private void refreshProjects() {
-        Project selected = projectList.getSelectedValue();
+    private void refreshContextPanels() {
+        Project selectedProject = workspacePanel.getSelectedProject();
+        Story selectedStory = workspacePanel.getSelectedStory();
+        Task selectedTask = workspacePanel.getSelectedTask();
 
-        projectModel.clear();
-        for (Project project : blackboard.getProjects()) {
-            projectModel.addElement(project);
-        }
-
-        if (selected != null) {
-            projectList.setSelectedValue(selected, true);
-        }
+        infoPanel.display(blackboard, selectedProject, selectedStory, selectedTask);
+        aiPanel.updateSelection(selectedStory);
     }
 
-    private void refreshStories() {
-        Project selectedProject = projectList.getSelectedValue();
-        Story selectedStory = storyList.getSelectedValue();
-
-        storyModel.clear();
-
-        if (selectedProject != null) {
-            for (Story story : selectedProject.getStories()) {
-                storyModel.addElement(story);
-            }
-        }
-
-        if (selectedStory != null) {
-            storyList.setSelectedValue(selectedStory, true);
-        }
+    private void showError(String title, RuntimeException ex) {
+        JOptionPane.showMessageDialog(this, ex.getMessage(), title, JOptionPane.ERROR_MESSAGE);
+        setStatus(title + ".");
     }
 
-    private void refreshTasks() {
-        Story selectedStory = storyList.getSelectedValue();
-        Task selectedTask = taskList.getSelectedValue();
+    private void setStatus(String message) {
+        statusLabel.setText(message);
+    }
 
-        taskModel.clear();
-
-        if (selectedStory != null) {
-            for (Task task : selectedStory.getTasks()) {
-                taskModel.addElement(task);
-            }
-        }
-
-        if (selectedTask != null) {
-            taskList.setSelectedValue(selectedTask, true);
-        }
+    @Override
+    public void dispose() {
+        blackboard.removeObserver(this);
+        super.dispose();
     }
 }
