@@ -68,6 +68,7 @@ public class GUI extends JFrame implements BlackboardObserver {
     private JComponent createToolbar() {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
 
+        // Taiga API integration — Joseph Carl Santos
         JButton connectTaigaButton = new JButton("Connect to Taiga");
         JButton refreshButton = new JButton("Refresh View");
 
@@ -99,13 +100,9 @@ public class GUI extends JFrame implements BlackboardObserver {
     }
 
     private void runTaigaConnection() {
-        try {
-            appController.connectToTaiga(this, blackboard);
-            setStatus("Taiga action completed. View refreshed from Blackboard.");
-            blackboardChanged();
-        } catch (RuntimeException ex) {
-            showError("Taiga connection failed", ex);
-        }
+        setStatus("Connecting to Taiga...");
+        appController.connectToTaiga(this, blackboard);
+        // TaigaAppController finishes async; refresh when blackboard notifies observers.
     }
 
     @Override

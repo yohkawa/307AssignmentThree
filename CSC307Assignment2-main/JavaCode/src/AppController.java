@@ -9,6 +9,12 @@ import java.awt.Component;
  */
 
 public interface AppController {
+
+    /**
+     * Taiga API connection and sync. Implemented by {@link TaigaAppController}.
+     *
+     * @author Joseph Carl Santos
+     */
     default void connectToTaiga(Component parent, Blackboard blackboard) {
         JOptionPane.showMessageDialog(
                 parent,
